@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+  body {
+    background-color: #fff;
+    text-align: center;
+  }
+  .graticule {
+    fill: none;
+    stroke: #ccc;
+    stroke-width: .5px;
+  }
+  .land {
+    fill: #ccc;
+  }
+  .route {
+    fill: none;
+    stroke: #333;
+    visibility: hidden;
+    opacity: 0.25;
+    stroke-width: .5px;
+  }
+  .boundary {
+    fill: none;
+    stroke: #fff;
+    stroke-width: .5px;
+  }
+</style>
+<body>
+  <script src="javascript/d3.v3.min.js"></script>
+  <script src="javascript/topojson.v1.min.js"></script>
+  <script>
+    function parseAirport(row) {
+      return {id: row[0], name: row[1], city: row[2], country: row[3], iata: row[4], icao: row[5], lat: +row[6], lon: +row[7], alt: +row[8], tzv: +row[9], dst: row[10], tz: row[11]};
+    }
+    function parseRoute(row) {
+      return {air: row[0], airid: row[1], src: row[2], srcid: row[3], dst: row[4], dstid: row[5], code: row[6], stops: row[7], eqp: row[8]};
+    }
+    function parseRanking(row) {
+      return {position: parseInt(row[0]) + 1, iata: row[1], pagerank: +row[2]};
+    }
+    d3.text("data/airports.dat", function(airportsData) {
+      d3.text("data/routes.dat", function(routesData) {
+        d3.text("ranking.txt", function(rankingData) {
+          var airports = d3.csv.parseRows(airportsData).map(parseAirport);
+          var routes = d3.csv.parseRows(routesData).map(parseRoute);
+          var input = d3.csv.parseRows(rankingData).map(parseRanking);
+
+          var ranking = {};
+          for (var i = 0; i < input.length; i++) {
+            var k = input[i];
+            ranking[k.iata] = k;
+          }
+
+          function getRanking(iata) {
+            return ranking[iata] !== undefined ? ranking[iata] : {pos: input.length, pagerank: 0};
+          }
+
+          var index = {};
+          for (var i = 0; i < airports.length; i++) {
+            var k = airports[i];
+            index[k.iata] = k;
+          }
+
+          var width = 1280;
+          var height = 720;
+
+          var colorScale = d3.scale.log()
+            .range(['red', 'blue'])
+            .domain([1, input.length]);
+
+          var projection = d3.geo.equirectangular()
+            .scale(200)
+            .translate([width / 2, height / 2])
+            .precision(.1);
+
+          var path = d3.geo.path().projection(projection);
+
+          var graticule = d3.geo.graticule();
+
+          var svg = d3.select("body").append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+          svg.append("path")
+            .datum(graticule)
+            .attr("class", "graticule")
+            .attr("d", path);
+
+          d3.json("data/world-50m.json", function(error, world) {
+            svg.insert("path", ".graticule")
+              .datum(topojson.feature(world, world.objects.land))
+              .attr("class", "land")
+              .attr("d", path);
+            svg.insert("path", ".graticule")
+              .datum(topojson.mesh(world, world.objects.countries, function(a, b) { return a !== b; }))
+              .attr("class", "boundary")
+              .attr("d", path);
+          });
+
+          for (var i = 0; i < routes.length; i++) {
+            var r = routes[i];
+            var k = ranking[r.src];
+            var l = ranking[r.dst];
+            var src = index[r.src];
+            var dst = index[r.dst];
+            if (k !== undefined && k.position < 1000 && l !== undefined && l.position < 1000 && src !== undefined && dst !== undefined) {
+              var route = svg.append("path")
+               .datum({type: "LineString", coordinates: [[src.lon, src.lat], [dst.lon, dst.lat]]})
+               .attr("class", function(x) {
+                return 'route i' + r.dst;
+               })
+               .attr("d", path);
+            }
+          }
+
+          svg.selectAll(".airport")
+            .data(airports).enter().append("circle")
+            .attr("r", function(d) {
+              var r = getRanking(d.iata);
+              return Math.sqrt(r.pagerank * input.length) + 0.2;
+            })
+            .attr("class", function(d) {
+              return "airport " + d.iata;
+            })
+            .style("opacity", .5)
+            .style("fill", function(d) {
+              var r = getRanking(d.iata);
+              return colorScale(parseFloat(r.position));
+            })
+            .attr("transform", function(d) {
+              var location = [d.lon, d.lat];
+              return "translate(" + projection(location) + ")"
+            })
+            .on("mouseover", function(x) {
+              var s = '.route.i' + x.iata;
+              svg.selectAll(s).style('visibility', 'visible')
+            })
+            .on("mouseout", function(x) {
+              var s = '.route.i' + x.iata;
+              svg.selectAll(s).style('visibility', 'hidden')
+            })
+            .append("svg:title")
+            .text(function(d) {
+              var r = getRanking(d.iata);
+              return '#' + r.position + ': ' + d.name + ' (' + d.iata + ') ' + r.pagerank;
+            });
+
+          d3.select(self.frameElement).style("height", height + "px");
+        });
+      });
+    });
+  </script>
+</body>
